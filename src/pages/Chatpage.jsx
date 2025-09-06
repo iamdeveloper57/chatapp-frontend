@@ -222,7 +222,6 @@
 
 
 
-// Chat.js
 import { useState, useEffect, useRef } from "react";
 import io from "socket.io-client";
 import { useNavigate } from "react-router-dom";
@@ -237,15 +236,13 @@ export default function Chat() {
   const [activeUser, setActiveUser] = useState(null);
   const [text, setText] = useState("");
   const [socket, setSocket] = useState(null);
-
   const [mobileView, setMobileView] = useState("list");
   const [isMobile, setIsMobile] = useState(window.innerWidth < 768);
 
-  // Call state
+  // Call states
   const [incomingCall, setIncomingCall] = useState(null);
   const [calling, setCalling] = useState(false);
   const [peerConnection, setPeerConnection] = useState(null);
-
   const localStream = useRef(null);
   const remoteAudioRef = useRef(null);
 
@@ -254,16 +251,14 @@ export default function Chat() {
   const token = localStorage.getItem("token");
   const navigate = useNavigate();
 
-  // Resize listener
+  // Detect mobile resize
   useEffect(() => {
     const handleResize = () => setIsMobile(window.innerWidth < 768);
     window.addEventListener("resize", handleResize);
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Auto-scroll
-  const scrollToBottom = () =>
-    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  const scrollToBottom = () => messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
 
   // Fetch users
   useEffect(() => {
@@ -286,40 +281,25 @@ export default function Chat() {
     newSocket.on("onlineUsers", (data) => setOnlineUsers(data));
 
     newSocket.on("privateMessage", (msg) => {
-      if (
-        activeUser &&
-        (msg.sender === activeUser._id || msg.receiver === activeUser._id)
-      ) {
+      if (activeUser && (msg.sender === activeUser._id || msg.receiver === activeUser._id)) {
         setMessages((prev) => [...prev, msg]);
         scrollToBottom();
       }
     });
 
-    // Call events
-    newSocket.on("call-made", ({ from, offer }) => {
-      setIncomingCall({ from, offer });
-    });
+    // Incoming call
+    newSocket.on("call-made", ({ from, offer }) => setIncomingCall({ from, offer }));
 
     newSocket.on("answer-made", async ({ answer }) => {
-      if (peerConnection) {
-        await peerConnection.setRemoteDescription(answer);
-        setCalling(true);
-      }
+      if (peerConnection) await peerConnection.setRemoteDescription(answer);
+      setCalling(true);
     });
 
     newSocket.on("ice-candidate", async ({ candidate }) => {
-      if (peerConnection && candidate) {
-        try {
-          await peerConnection.addIceCandidate(candidate);
-        } catch (err) {
-          console.error("Error adding ICE candidate", err);
-        }
-      }
+      if (candidate && peerConnection) await peerConnection.addIceCandidate(candidate);
     });
 
-    newSocket.on("end-call", () => {
-      endCall();
-    });
+    newSocket.on("end-call", () => endCall());
 
     return () => newSocket.disconnect();
   }, [token, activeUser, peerConnection]);
@@ -347,14 +327,10 @@ export default function Chat() {
 
     const res = await fetch(`${API_URL}/messages`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${token}`,
-      },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
       body: JSON.stringify({ to: activeUser._id, message: text }),
     });
     const savedMessage = await res.json();
-
     socket.emit("privateMessage", savedMessage);
     setMessages((prev) => [...prev, savedMessage]);
     setText("");
@@ -368,40 +344,43 @@ export default function Chat() {
     navigate("/login");
   };
 
-  // --- CALL FUNCTIONS ---
+  // Peer connection setup
   const createPeerConnection = (to) => {
     const pc = new RTCPeerConnection();
-    setPeerConnection(pc);
 
-    // Add local mic
-    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
-      localStream.current = stream;
-      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
-    });
-
-    // Remote stream
     pc.ontrack = (event) => {
-      remoteAudioRef.current.srcObject = event.streams[0];
+      if (remoteAudioRef.current) {
+        remoteAudioRef.current.srcObject = event.streams[0];
+      }
     };
 
-    // ICE candidates
     pc.onicecandidate = (event) => {
       if (event.candidate) {
         socket.emit("ice-candidate", { to, candidate: event.candidate });
       }
     };
 
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      localStream.current = stream;
+      stream.getTracks().forEach((track) => pc.addTrack(track, stream));
+    });
+
+    setPeerConnection(pc);
     return pc;
   };
 
+  // Start call
   const startCall = async (userId) => {
     const pc = createPeerConnection(userId);
     const offer = await pc.createOffer();
     await pc.setLocalDescription(offer);
     socket.emit("call-user", { to: userId, offer });
+    setCalling(true);
   };
 
+  // Answer call
   const answerCall = async () => {
+    if (!incomingCall) return;
     const pc = createPeerConnection(incomingCall.from);
     await pc.setRemoteDescription(incomingCall.offer);
     const answer = await pc.createAnswer();
@@ -411,119 +390,60 @@ export default function Chat() {
     setCalling(true);
   };
 
+  // End call
   const endCall = () => {
     peerConnection?.close();
     setPeerConnection(null);
     setCalling(false);
-    if (activeUser) {
-      socket?.emit("end-call", { to: activeUser._id });
-    }
+    socket?.emit("end-call", { to: activeUser._id });
   };
 
   return (
     <div className="h-screen w-screen flex bg-gray-50">
       {/* Sidebar */}
       {(!isMobile || mobileView === "list") && (
-        <div
-          className={`flex flex-col w-1/3 max-w-[320px] border-r bg-white ${
-            isMobile ? "absolute z-50 h-screen" : ""
-          }`}
-        >
+        <div className={`flex flex-col w-1/3 max-w-[320px] border-r bg-white ${isMobile ? "absolute z-50 h-screen" : ""}`}>
           <div className="p-4 font-bold border-b text-lg">Chats</div>
           <div className="flex-1 overflow-y-auto">
             {users.map((u) => (
               <div
                 key={u._id}
                 onClick={() => selectUser(u)}
-                className={`p-3 cursor-pointer flex justify-between items-center hover:bg-gray-100 ${
-                  activeUser?._id === u._id ? "bg-gray-200" : ""
-                }`}
+                className={`p-3 cursor-pointer flex justify-between items-center hover:bg-gray-100 ${activeUser?._id === u._id ? "bg-gray-200" : ""}`}
               >
                 <span>{u.username}</span>
-                <div className="flex items-center gap-2">
-                  {onlineUsers.includes(u._id) && (
-                    <span className="text-green-500">●</span>
-                  )}
-                  <button
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      startCall(u._id);
-                    }}
-                    className="text-blue-600"
-                  >
-                    📞
-                  </button>
-                </div>
+                {onlineUsers.includes(u._id) && <span className="text-green-500">●</span>}
+                <button onClick={() => startCall(u._id)} className="ml-2 text-blue-600">📞</button>
               </div>
             ))}
           </div>
-          <button
-            onClick={handleLogout}
-            className="m-3 p-2 bg-red-500 text-white rounded"
-          >
-            Logout
-          </button>
+          <button onClick={handleLogout} className="m-3 p-2 bg-red-500 text-white rounded">Logout</button>
         </div>
       )}
 
       {/* Chat Window */}
       {(!isMobile || (isMobile && mobileView === "chat")) && activeUser && (
         <div className="flex-1 flex flex-col h-screen">
-          {/* Header */}
-          <div className="sticky top-0 z-10 p-4 bg-blue-600 text-white flex items-center justify-between">
-            <div className="flex items-center">
-              {isMobile && (
-                <button
-                  onClick={() => setMobileView("list")}
-                  className="mr-2 text-white font-bold text-lg"
-                >
-                  ←
-                </button>
-              )}
-              <span className="text-lg font-semibold">
-                {activeUser.username}
-              </span>
-            </div>
-            {calling && (
-              <button
-                onClick={endCall}
-                className="bg-red-500 px-3 py-1 rounded-full"
-              >
-                End Call
-              </button>
-            )}
+          <div className="sticky top-0 z-10 p-4 bg-blue-600 text-white flex items-center">
+            {isMobile && <button onClick={() => setMobileView("list")} className="mr-2 text-white font-bold text-lg">←</button>}
+            <span className="text-lg font-semibold">{activeUser.username}</span>
           </div>
 
           {/* Messages */}
-          <div
-            className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-2 bg-gray-50"
-            ref={messagesEndRef}
-          >
+          <div className="flex-1 overflow-y-auto px-4 py-2 flex flex-col gap-2 bg-gray-50">
             {messages.map((m, i) => {
-              const isMe = m.sender.toString() === myId;
+              const senderId = m.sender.toString();
+              const isMe = senderId === myId;
               return (
-                <div
-                  key={i}
-                  className={`flex ${isMe ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`px-3 py-2 max-w-[75%] break-words ${
-                      isMe
-                        ? "bg-sky-400 text-white rounded-l-2xl rounded-tr-2xl"
-                        : "bg-yellow-800 text-white rounded-r-2xl rounded-tl-2xl"
-                    }`}
-                  >
+                <div key={i} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                  <div className={`px-3 py-2 max-w-[75%] break-words ${isMe ? "bg-sky-400 text-white rounded-l-2xl rounded-tr-2xl rounded-br-none" : "bg-yellow-800 text-white rounded-r-2xl rounded-tl-2xl rounded-bl-none"}`}>
                     <span>{m.text}</span>
-                    <div className="text-[10px] text-gray-100 text-right mt-1">
-                      {new Date(m.createdAt).toLocaleTimeString([], {
-                        hour: "2-digit",
-                        minute: "2-digit",
-                      })}
-                    </div>
+                    <div className="text-[10px] text-gray-100 text-right mt-1">{new Date(m.createdAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</div>
                   </div>
                 </div>
               );
             })}
+            <div ref={messagesEndRef} />
           </div>
 
           {/* Input */}
@@ -536,41 +456,21 @@ export default function Chat() {
               onChange={(e) => setText(e.target.value)}
               onKeyDown={(e) => e.key === "Enter" && sendMessage()}
             />
-            <button
-              onClick={sendMessage}
-              className="ml-2 bg-blue-600 text-white px-4 py-2 rounded-full"
-              disabled={!activeUser}
-            >
-              Send
-            </button>
+            <button onClick={sendMessage} className="ml-2 bg-blue-600 text-white px-4 py-2 rounded-full" disabled={!activeUser}>Send</button>
           </div>
         </div>
       )}
 
-      {/* Audio for remote stream */}
-      <audio ref={remoteAudioRef} autoPlay />
+      {/* Remote audio */}
+      <audio ref={remoteAudioRef} autoPlay playsInline controls={false} muted={false} />
 
-      {/* Incoming call popup */}
+      {/* Incoming call */}
       {incomingCall && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
           <div className="bg-white p-4 rounded shadow text-center">
-            <p>
-              Incoming call from{" "}
-              {users.find((u) => u._id === incomingCall.from)?.username ||
-                "Unknown"}
-            </p>
-            <button
-              onClick={answerCall}
-              className="bg-green-500 text-white px-4 py-2 rounded mr-2"
-            >
-              Answer
-            </button>
-            <button
-              onClick={() => setIncomingCall(null)}
-              className="bg-red-500 text-white px-4 py-2 rounded"
-            >
-              Decline
-            </button>
+            <p>Incoming call from {users.find(u => u._id === incomingCall.from)?.username}</p>
+            <button onClick={answerCall} className="bg-green-500 text-white px-4 py-2 rounded mr-2">Answer</button>
+            <button onClick={() => setIncomingCall(null)} className="bg-red-500 text-white px-4 py-2 rounded">Decline</button>
           </div>
         </div>
       )}
